@@ -1,4 +1,6 @@
 use glfw::{fail_on_errors, Action, Context, Key, Window, WindowHint, ClientApiHint};
+mod renderer_backend;
+use renderer_backend::pipeline_builder::{self, PipelineBuilder};
 
 struct State<'window> {
     instance: wgpu::Instance,
@@ -8,6 +10,7 @@ struct State<'window> {
     config: wgpu::SurfaceConfiguration,
     size: (i32, i32),
     window: &'window mut Window,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl<'window> State<'window> {
@@ -60,6 +63,11 @@ impl<'window> State<'window> {
         };
         surface.configure(&device, &config);
 
+        let mut pipeline_builder = PipelineBuilder::new();
+        pipeline_builder.set_shader_module("shaders/shader.wgsl", "vs_main", "fs_main");
+        pipeline_builder.set_pixel_format(config.format);
+        let render_pipeline = pipeline_builder.build_pipeline(&device);
+
         Self {
             instance,
             window,
@@ -68,6 +76,7 @@ impl<'window> State<'window> {
             queue,
             config,
             size,
+            render_pipeline,
         }
     }
 
@@ -104,7 +113,11 @@ impl<'window> State<'window> {
             timestamp_writes: None
         };
 
-        command_encoder.begin_render_pass(&render_pass_descriptor);
+        {
+            let mut renderpass = command_encoder.begin_render_pass(&render_pass_descriptor);
+            renderpass.set_pipeline(&self.render_pipeline);
+            renderpass.draw(0..3, 0..1);
+        }
         self.queue.submit(std::iter::once(command_encoder.finish()));
 
         drawable.present();
