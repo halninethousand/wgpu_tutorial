@@ -1,6 +1,7 @@
 use glfw::{fail_on_errors, Action, Context, Key, Window, WindowHint, ClientApiHint};
 mod renderer_backend;
-use renderer_backend::pipeline_builder::{self, PipelineBuilder};
+use renderer_backend::pipeline_builder::PipelineBuilder;
+use renderer_backend::mesh_builder;
 
 struct State<'window> {
     instance: wgpu::Instance,
@@ -11,6 +12,7 @@ struct State<'window> {
     size: (i32, i32),
     window: &'window mut Window,
     render_pipeline: wgpu::RenderPipeline,
+    triangle_mesh: wgpu::Buffer,
 }
 
 impl<'window> State<'window> {
@@ -62,6 +64,8 @@ impl<'window> State<'window> {
             desired_maximum_frame_latency: 2
         };
         surface.configure(&device, &config);
+
+        let triangle_mesh = mesh_builder::make_triangle(&device);
 
         let mut pipeline_builder = PipelineBuilder::new();
         pipeline_builder.set_shader_module("shaders/shader.wgsl", "vs_main", "fs_main");
