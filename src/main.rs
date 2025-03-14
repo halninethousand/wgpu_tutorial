@@ -70,6 +70,7 @@ impl<'window> State<'window> {
         let mut pipeline_builder = PipelineBuilder::new();
         pipeline_builder.set_shader_module("shaders/shader.wgsl", "vs_main", "fs_main");
         pipeline_builder.set_pixel_format(config.format);
+        pipeline_builder.add_buffer_layout(mesh_builder::Vertex::get_layout());
         let render_pipeline = pipeline_builder.build_pipeline(&device);
 
         Self {
@@ -81,6 +82,7 @@ impl<'window> State<'window> {
             config,
             size,
             render_pipeline,
+            triangle_mesh,
         }
     }
 
@@ -120,6 +122,7 @@ impl<'window> State<'window> {
         {
             let mut renderpass = command_encoder.begin_render_pass(&render_pass_descriptor);
             renderpass.set_pipeline(&self.render_pipeline);
+            renderpass.set_vertex_buffer(0, self.triangle_mesh.slice(..));
             renderpass.draw(0..3, 0..1);
         }
         self.queue.submit(std::iter::once(command_encoder.finish()));
