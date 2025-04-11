@@ -1,30 +1,32 @@
-use glfw::{fail_on_errors, Action, Context, Key, Window, WindowHint, ClientApiHint};
+use glfw::{fail_on_errors, Action, Key, Window, WindowHint, ClientApiHint};
 mod renderer_backend;
-use renderer_backend::pipeline_builder::PipelineBuilder;
-use renderer_backend::mesh_builder;
+use renderer_backend::{bind_group_layout, material::Material, mesh_builder, pipeline};
 
-struct State<'window> {
+struct State<'a> {
     instance: wgpu::Instance,
-    surface: wgpu::Surface<'window>,
+    surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (i32, i32),
-    window: &'window mut Window,
+    window: &'a mut Window,
     render_pipeline: wgpu::RenderPipeline,
     triangle_mesh: wgpu::Buffer,
     quad_mesh: mesh_builder::Mesh,
+    triangle_material: Material,
+    quad_material: Material,
 }
 
-impl<'window> State<'window> {
-    async fn new(window: &'window mut Window) -> Self {
+impl<'a> State<'a> {
+
+    async fn new(window: &'a mut Window) -> Self {
 
         let size = window.get_framebuffer_size();
 
         let instance_descriptor = wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(), ..Default::default()
         };
-        let instance = wgpu::Instance::new(&instance_descriptor);
+        let instance = wgpu::Instance::new(instance_descriptor);
         let surface = instance.create_surface(window.render_context()).unwrap();
 
         let adapter_descriptor = wgpu::RequestAdapterOptionsBase {
@@ -38,7 +40,6 @@ impl<'window> State<'window> {
         let device_descriptor = wgpu::DeviceDescriptor {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
             label: Some("Device"),
         };
         let (device, queue) = adapter
@@ -67,13 +68,28 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         let triangle_buffer = mesh_builder::make_triangle(&device);
+
         let quad_mesh = mesh_builder::make_quad(&device);
 
-        let mut pipeline_builder = PipelineBuilder::new();
-        pipeline_builder.set_shader_module("shaders/shader.wgsl", "vs_main", "fs_main");
-        pipeline_builder.set_pixel_format(config.format);
-        pipeline_builder.add_buffer_layout(mesh_builder::Vertex::get_layout());
-        let render_pipeline = pipeline_builder.build_pipeline(&device);
+        let material_bind_group_layout;
+        {
+            let mut builder = bind_group_layout::Builder::new(&device);
+            builder.add_material();
+            material_bind_group_layout = builder.build("Material Bind Group Layout");
+        }
+
+        let render_pipeline: wgpu::RenderPipeline;
+        {
+            let mut builder = pipeline::Builder::new(&device);
+            builder.set_shader_module("shaders/shader.wgsl", "vs_main", "fs_main");
+            builder.set_pixel_format(config.format);
+            builder.add_vertex_buffer_layout(mesh_builder::Vertex::get_layout());
+            builder.add_bind_group_layout(&material_bind_group_layout);
+            render_pipeline = builder.build("Render Pipeline");
+        }
+
+        let triangle_material = Material::new("../img/winry.jpg", &device, &queue, "Triangle Material", &material_bind_group_layout);
+        let quad_material = Material::new("../img/satin.jpg", &device, &queue, "Quad Material", &material_bind_group_layout);
 
         Self {
             instance,
@@ -85,8 +101,23 @@ impl<'window> State<'window> {
             size,
             render_pipeline,
             triangle_mesh: triangle_buffer,
-            quad_mesh: quad_mesh,
+            quad_mesh,
+            triangle_material: triangle_material,
+            quad_material: quad_material
         }
+    }
+
+    fn resize(&mut self, new_size: (i32, i32)) {
+        if new_size.0 > 0 && new_size.1 > 0 {
+            self.size = new_size;
+            self.config.width = new_size.0 as u32;
+            self.config.height = new_size.1 as u32;
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    fn update_surface(&mut self) {
+        self.surface = self.instance.create_surface(self.window.render_context()).unwrap();
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError>{
@@ -105,10 +136,10 @@ impl<'window> State<'window> {
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.25,
-                    g: 0.0,
-                    b: 0.5,
-                    a: 0.0
+                    r: 0.75,
+                    g: 0.5,
+                    b: 0.25,
+                    a: 1.0
                 }),
                 store: wgpu::StoreOp::Store,
             },
@@ -126,10 +157,12 @@ impl<'window> State<'window> {
             let mut renderpass = command_encoder.begin_render_pass(&render_pass_descriptor);
             renderpass.set_pipeline(&self.render_pipeline);
 
+            renderpass.set_bind_group(0, &self.quad_material.bind_group, &[]);
             renderpass.set_vertex_buffer(0, self.quad_mesh.vertex_buffer.slice(..));
             renderpass.set_index_buffer(self.quad_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             renderpass.draw_indexed(0..6, 0, 0..1);
 
+            renderpass.set_bind_group(0, &self.triangle_material.bind_group, &[]);
             renderpass.set_vertex_buffer(0, self.triangle_mesh.slice(..));
             renderpass.draw(0..3, 0..1);
         }
@@ -139,21 +172,6 @@ impl<'window> State<'window> {
 
         Ok(())
     }
-
-
-    fn resize(&mut self, new_size: (i32, i32)) {
-        if new_size.0 > 0 && new_size.1 > 0 {
-            self.size = new_size;
-            self.config.width = new_size.0 as u32;
-            self.config.height = new_size.1 as u32;
-            self.surface.configure(&self.device, &self.config);
-        }
-    }
-
-    fn update_surface(&mut self) {
-        self.surface = self.instance.create_surface(self.window.render_context()).unwrap();
-
-    }
 }
 
 async fn run() {
@@ -161,11 +179,11 @@ async fn run() {
     let mut glfw = glfw::init(fail_on_errors!())
         .unwrap();
     glfw.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
-    let (mut window, events) =
+    let (mut window, events) = 
         glfw.create_window(
-            800, 600, "It's WGPU time.",
+            800, 600, "It's WGPU time.", 
             glfw::WindowMode::Windowed).unwrap();
-
+    
     let mut state = State::new(&mut window).await;
 
     state.window.set_framebuffer_size_polling(true);
@@ -177,17 +195,19 @@ async fn run() {
         glfw.poll_events();
         for (_, event) in glfw::flush_messages(&events) {
             match event {
+
+                //Hit escape
                 glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                     state.window.set_should_close(true)
                 }
 
-                // window move update surface
+                //Window was moved
                 glfw::WindowEvent::Pos(..) => {
                     state.update_surface();
                     state.resize(state.size);
                 }
 
-                // window resize update surface
+                //Window was resized
                 glfw::WindowEvent::FramebufferSize(width, height) => {
                     state.update_surface();
                     state.resize((width, height));
@@ -204,7 +224,6 @@ async fn run() {
             },
             Err(e) => eprintln!("{:?}", e),
         }
-
     }
 }
 
